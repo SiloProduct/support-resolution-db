@@ -35,6 +35,9 @@
         --card: #ffffff;
         --card-2: #f6f8fb;
         --footer-bg: #f4f7fb;
+        --input-bg: #ffffff;
+        --input-border: #dbe3ef;
+        --input-hover: #c5d2e6;
       }
 
       /* Dark theme overrides */
@@ -66,6 +69,9 @@
         --card: #151c26;
         --card-2: #10151c;
         --footer-bg: #0d1217;
+        --input-bg: #0e141b;
+        --input-border: #243041;
+        --input-hover: #2e4057;
       }
 
       html, body {
@@ -188,14 +194,18 @@
         gap: 8px;
       }
       .input, select {
-        background: #0e141b;
+        background: var(--input-bg);
         color: var(--text);
-        border: 1px solid var(--border);
+        border: 1px solid var(--input-border);
         border-radius: 10px;
         padding: 10px 12px;
         outline: none;
         width: 100%;
         box-sizing: border-box;
+        transition: border-color 0.2s ease;
+      }
+      .input:hover, select:hover {
+        border-color: var(--input-hover);
       }
       .left .list {
         padding: 6px 8px 10px 8px;
