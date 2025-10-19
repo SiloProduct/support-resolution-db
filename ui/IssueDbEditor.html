@@ -27,10 +27,10 @@
         --btn-2: #e6ecf5; /* end */
         --btn-secondary: #eef2f7;
         --btn-secondary-2: #e4e9f3;
-        --btn-primary: #356fe7;
-        --btn-primary-2: #2a5ad1;
-        --btn-danger: #e55;
-        --btn-danger-2: #c33;
+        --btn-primary: #a2c0fc;
+        --btn-primary-2: #afc1ee;
+        --btn-danger: #e59d9d;
+        --btn-danger-2: #d28484;
         --pill-bg: #f5f8fc;
         --card: #ffffff;
         --card-2: #f6f8fb;
@@ -38,6 +38,7 @@
         --input-bg: #ffffff;
         --input-border: #dbe3ef;
         --input-hover: #c5d2e6;
+        --toolbar-height: 58px; /* will be measured on load */
       }
 
       /* Dark theme overrides */
@@ -167,7 +168,9 @@
       .pill.bad { border-color: #5a2121; background: #1a1010; color: #ffc2be; }
 
       .app {
-        height: calc(100% - 58px);
+        height: calc(100vh - var(--toolbar-height));
+        box-sizing: border-box;
+        overflow: hidden;
         display: grid;
         grid-template-columns: 360px 1fr;
         gap: 16px;
@@ -182,10 +185,7 @@
         overflow: hidden;
       }
 
-      .left {
-        display: flex;
-        flex-direction: column;
-      }
+      .left { display: flex; flex-direction: column; min-height: 0; }
       .left .search {
         padding: 12px;
         border-bottom: 1px solid var(--border);
@@ -207,10 +207,7 @@
       .input:hover, select:hover {
         border-color: var(--input-hover);
       }
-      .left .list {
-        padding: 6px 8px 10px 8px;
-        overflow: auto;
-      }
+      .left .list { padding: 6px 8px 10px 8px; overflow: auto; height: 100%; box-sizing: border-box; }
       .card {
         border: 1px solid var(--border);
         border-radius: 12px;
@@ -226,10 +223,7 @@
       .card .desc { color: var(--muted); font-size: 13px; margin-top: 4px; }
       .card .meta { color: #aac6ff; font-size: 12px; margin-top: 6px; }
 
-      .right {
-        display: grid;
-        grid-template-rows: auto 1fr auto;
-      }
+      .right { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; }
       .right .header {
         display: flex;
         align-items: center;
@@ -266,10 +260,7 @@
         opacity: 0.5;
         cursor: not-allowed;
       }
-      .right .content {
-        overflow: auto;
-        padding: 16px;
-      }
+      .right .content { overflow: auto; padding: 16px; height: 100%; box-sizing: border-box; }
       .grid2 {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -299,6 +290,27 @@
       .hidden { display: none; }
       .error { color: #ffb8b8; font-size: 12px; }
 
+      /* Conversation modal */
+      .modal-backdrop {
+        position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: none; align-items: center; justify-content: center; z-index: 100;
+      }
+      .modal {
+        width: min(900px, 92vw);
+        max-height: 80vh;
+        background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: var(--shadow);
+        display: grid; grid-template-rows: auto 1fr auto;
+      }
+      .modal .m-header { display:flex; align-items:center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+      .modal .m-title { font-weight: 600; }
+      .modal .m-content { padding: 12px; overflow: auto; font-size: 14px; }
+      .msg { border: 1px solid var(--border); border-radius: 10px; padding: 6px 8px; margin-bottom: 8px; }
+      .msg.agent { background: rgba(79,140,255,0.08); }
+      .msg.user { background: rgba(243, 156, 18, 0.08); }
+      .modal .m-footer { padding: 10px 12px; border-top: 1px solid var(--border); display:flex; justify-content:flex-end; }
+
       @media (max-width: 1100px) {
         .app { grid-template-columns: 1fr; height: auto; }
         .right { min-height: 70vh; }
@@ -321,6 +333,7 @@
 
       <div class="spacer"></div>
 
+      <button class="btn" id="btnLinkConversations" title="Link conversations folder"><span>Link conversations</span></button>
       <button class="btn" id="btnTheme" title="Toggle light/dark"><span>Light</span></button>
       <div id="envStatus" class="pill warn hidden">Limited mode: use Chrome/Edge to Save in-place</div>
       <div id="fileStatus" class="pill">No file opened</div>
@@ -382,8 +395,12 @@
               </div>
             </div>
             <div class="field">
-              <div class="label">Tickets (comma separated IDs)</div>
-              <textarea class="input small" id="f_tickets" placeholder="20, 21, 35"></textarea>
+              <div class="label">Tickets</div>
+              <div class="chips" id="ticketsChips"></div>
+              <div class="row" style="margin-top:8px;">
+                <input class="input grow" id="tkInput" placeholder="Add ticket id (number) and press Enter" />
+                <button class="btn" id="tkAdd">Add</button>
+              </div>
             </div>
           </div>
 
@@ -401,12 +418,12 @@
 
           <div class="grid2">
             <div class="field">
-              <div class="label">Confidence (0.0 - 1.0)</div>
-              <input class="input" id="f_confidence" type="number" min="0" max="1" step="0.01" />
-            </div>
-            <div class="field">
               <div class="label">Notes</div>
               <textarea class="input" id="f_notes"></textarea>
+            </div>
+            <div class="field">
+              <div class="label">Confidence</div>
+              <div class="pill" id="f_confidence_label">—</div>
             </div>
           </div>
           <div class="error" id="e_global"></div>
@@ -421,12 +438,28 @@
       </div>
     </div>
 
+    <!-- Conversation Modal -->
+    <div class="modal-backdrop" id="convBackdrop">
+      <div class="modal">
+        <div class="m-header">
+          <div class="m-title" id="convTitle">Conversation</div>
+        </div>
+        <div class="m-content" id="convContent"></div>
+        <div class="m-footer">
+          <button class="btn" id="convFreshdesk">View in Freshdesk</button>
+          <button class="btn" id="convClose2">Close</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       // Application state
       /** @type {Array<any>} */
       let db = [];
       /** @type {FileSystemFileHandle|null} */
       let currentFileHandle = null;
+      /** @type {FileSystemDirectoryHandle|null} */
+      let conversationsDirHandle = null;
       let selectedIndex = -1;
       let dirty = false;
 
@@ -448,9 +481,12 @@
       const keywordsChips = el('keywordsChips');
       const kwInput = el('kwInput');
       const kwAdd = el('kwAdd');
-      const f_tickets = el('f_tickets');
+      const ticketsChips = el('ticketsChips');
+      const tkInput = el('tkInput');
+      const tkAdd = el('tkAdd');
+      const btnLinkConversations = el('btnLinkConversations');
       const f_root_cause = el('f_root_cause');
-      const f_confidence = el('f_confidence');
+      const f_confidence_label = el('f_confidence_label');
       const f_notes = el('f_notes');
       const stepsContainer = el('stepsContainer');
 
@@ -475,8 +511,14 @@
 
       const saveOk = el('saveOk');
       const saveErr = el('saveErr');
+      const convBackdrop = el('convBackdrop');
+      const convTitle = el('convTitle');
+      const convContent = el('convContent');
+      const convClose2 = el('convClose2');
+      const convFreshdesk = el('convFreshdesk');
 
       const supportsFS = 'showOpenFilePicker' in window && 'showSaveFilePicker' in window;
+      const supportsDirPicker = 'showDirectoryPicker' in window;
 
       function setDirty(v) {
         dirty = !!v;
@@ -583,9 +625,10 @@
         // keywords: clear chips and input
         if (keywordsChips) keywordsChips.innerHTML = '';
         if (kwInput) kwInput.value = '';
-        f_tickets.value = '';
+        if (ticketsChips) ticketsChips.innerHTML = '';
+        if (tkInput) tkInput.value = '';
         f_root_cause.value = '';
-        f_confidence.value = '';
+        if (f_confidence_label) f_confidence_label.textContent = '—';
         f_notes.value = '';
         stepsContainer.innerHTML = '';
         [e_category, e_short_description, e_resolution_steps, e_global].forEach(n => n.textContent = '');
@@ -597,9 +640,9 @@
         f_category.value = issue.category || '';
         f_short_description.value = issue.short_description || '';
         renderKeywords(issue.keywords || []);
-        f_tickets.value = (issue.tickets || []).join(', ');
+        renderTickets(issue.tickets || []);
         f_root_cause.value = issue.root_cause || '';
-        f_confidence.value = (typeof issue.confidence === 'number' ? issue.confidence : '').toString();
+        f_confidence_label.textContent = (typeof issue.confidence === 'number' ? String(issue.confidence) : '—');
         f_notes.value = issue.notes || '';
 
         stepsContainer.innerHTML = '';
@@ -661,7 +704,7 @@
 
       function collectEditor() {
         const keywords = collectKeywords();
-        const tickets = f_tickets.value.split(',').map(s => s.trim()).filter(Boolean).map(s => Number(s)).filter(n => Number.isInteger(n));
+        const tickets = collectTickets();
         const steps = Array.from(stepsContainer.querySelectorAll('.step-input'))
           .map(i => i.value.trim())
           .filter(Boolean)
@@ -673,7 +716,7 @@
           keywords,
           root_cause: f_root_cause.value.trim(),
           resolution_steps: steps,
-          confidence: f_confidence.value === '' ? null : clamp(parseFloat(f_confidence.value), 0, 1),
+          confidence: db[selectedIndex] && typeof db[selectedIndex].confidence === 'number' ? db[selectedIndex].confidence : null,
           notes: f_notes.value.trim(),
           tickets
         };
@@ -800,6 +843,7 @@
         loadJsonText(text);
         fileStatus.textContent = file.name;
         btnSave.disabled = false;
+        // Do not prompt for conversations folder here. The user can link it explicitly via the toolbar button.
       }
 
       async function saveFileFS() {
@@ -908,7 +952,13 @@
       // Wire events
       btnOpen.addEventListener('click', async () => {
         if (supportsFS) {
-          try { await openFileFS(); } catch (e) { if (e?.name !== 'AbortError') importViaInput(); }
+          try {
+            await openFileFS();
+          } catch (e) {
+            if (e?.name !== 'AbortError') {
+              e_global.textContent = 'Open failed: ' + (e?.message || String(e));
+            }
+          }
         } else {
           importViaInput();
         }
@@ -919,6 +969,17 @@
       btnCopy.addEventListener('click', copyJson);
       btnNew.addEventListener('click', newDb);
       btnTheme.addEventListener('click', toggleTheme);
+      convClose2.addEventListener('click', closeConversationViewer);
+      convFreshdesk.addEventListener('click', () => {
+        const idTxt = (convTitle.textContent || '').replace('Ticket #','').trim();
+        const id = parseInt(idTxt, 10);
+        if (Number.isInteger(id)) {
+          window.open(`https://heysilo-help.freshdesk.com/a/tickets/${id}`, '_blank', 'noopener');
+        }
+      });
+      btnLinkConversations.addEventListener('click', async () => {
+        await pickConversationsDir();
+      });
       btnAdd.addEventListener('click', addIssue);
       btnDuplicate.addEventListener('click', duplicateIssue);
       btnDelete.addEventListener('click', deleteIssue);
@@ -926,8 +987,14 @@
       btnPrev.addEventListener('click', navigatePrev);
       btnNext.addEventListener('click', navigateNext);
 
-      [f_category, f_short_description, f_tickets, f_root_cause, f_confidence, f_notes].forEach(input => {
+      [f_category, f_short_description, f_root_cause, f_notes].forEach(input => {
         input.addEventListener('input', () => { applyEditorToSelected(); });
+      });
+
+      // Tickets chips interactions
+      tkAdd.addEventListener('click', addTicketFromInput);
+      tkInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); addTicketFromInput(); }
       });
 
       // Keywords chips interactions
@@ -976,6 +1043,59 @@
           .filter(Boolean);
       }
 
+      function renderTickets(list) {
+        ticketsChips.innerHTML = '';
+        (list || []).forEach(id => {
+          const chip = document.createElement('span');
+          chip.className = 'chip';
+          chip.innerHTML = `#${escapeHtml(String(id))} <button class="remove" title="Remove">×</button>`;
+          // Clicking the chip opens the conversation viewer
+          chip.addEventListener('click', (e) => {
+            if (e.target && (e.target).classList && (e.target).classList.contains('remove')) return;
+            openConversationViewer(Number(id));
+          });
+          chip.querySelector('.remove').addEventListener('click', (e) => {
+            e.stopPropagation();
+            chip.remove();
+            markDirtyFromEditor();
+            applyEditorToSelected();
+          });
+          ticketsChips.appendChild(chip);
+        });
+      }
+
+      function addTicketFromInput() {
+        const v = tkInput.value.trim();
+        if (!v) return;
+        const n = Number(v);
+        if (!Number.isInteger(n)) { tkInput.value = ''; return; }
+        const existing = new Set(collectTickets().map(x => x));
+        if (existing.has(n)) { tkInput.value = ''; return; }
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.innerHTML = `#${escapeHtml(String(n))} <button class=\"remove\" title=\"Remove\">×</button>`;
+        chip.addEventListener('click', (e) => {
+          if (e.target && (e.target).classList && (e.target).classList.contains('remove')) return;
+          openConversationViewer(n);
+        });
+        chip.querySelector('.remove').addEventListener('click', (e) => {
+          e.stopPropagation();
+          chip.remove();
+          markDirtyFromEditor();
+          applyEditorToSelected();
+        });
+        ticketsChips.appendChild(chip);
+        tkInput.value = '';
+        markDirtyFromEditor();
+        applyEditorToSelected();
+      }
+
+      function collectTickets() {
+        return Array.from(ticketsChips.querySelectorAll('.chip'))
+          .map(ch => Number(ch.textContent.replace('×','').replace('#','').trim()))
+          .filter(n => Number.isInteger(n));
+      }
+
       searchInput.addEventListener('input', renderList);
       categoryFilter.addEventListener('change', renderList);
 
@@ -990,6 +1110,12 @@
           document.body.classList.remove('theme-dark');
           btnTheme.querySelector('span').textContent = 'Light';
         }
+        // Measure toolbar height to prevent content scrolling under it
+        const toolbar = document.querySelector('.toolbar');
+        if (toolbar) {
+          const h = toolbar.getBoundingClientRect().height;
+          document.documentElement.style.setProperty('--toolbar-height', `${Math.round(h)}px`);
+        }
         if (!supportsFS) envStatus.classList.remove('hidden');
         btnSave.disabled = true; // until a FS handle is acquired via Open or Save As
         renderList();
@@ -1000,6 +1126,85 @@
         const isDark = document.body.classList.toggle('theme-dark');
         localStorage.setItem('silo-theme', isDark ? 'dark' : 'light');
         btnTheme.querySelector('span').textContent = isDark ? 'Dark' : 'Light';
+      }
+
+      function openConversationViewer(ticketId) {
+        convTitle.textContent = `Ticket #${ticketId}`;
+        convContent.innerHTML = '<div class="hint">Loading…</div>';
+        convBackdrop.style.display = 'flex';
+        (async () => {
+          // Preferred: if user linked the conversations directory, read via FS API
+          if (conversationsDirHandle) {
+            try {
+              const fh = await conversationsDirHandle.getFileHandle(`${ticketId}.json`);
+              const file = await fh.getFile();
+              const text = await file.text();
+              renderConversationJson(text);
+              return;
+            } catch (e) {
+              // fall through to fetch attempt below
+            }
+          }
+
+          // Fallback: try relative fetch (may be blocked by browser for file://)
+          try {
+            const res = await fetch(`../conversations/${ticketId}.json`);
+            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+            const text = await res.text();
+            renderConversationJson(text);
+          } catch (e) {
+            const needLink = supportsDirPicker ? '<button class="btn" id="convLinkNow">Link conversations folder</button>' : '';
+            convContent.innerHTML = `<div class="error" style="margin-bottom:8px;">Failed to load conversation. ${escapeHtml(e.message)}</div>${needLink}<div class="hint" style="margin-top:8px;">Tip: Click a ticket again after linking.</div>`;
+            const linkBtn = document.getElementById('convLinkNow');
+            if (linkBtn) {
+              linkBtn.addEventListener('click', async () => {
+                const ok = await pickConversationsDir();
+                if (ok) openConversationViewer(ticketId);
+              });
+            }
+          }
+        })();
+      }
+
+      function closeConversationViewer() {
+        convBackdrop.style.display = 'none';
+        convTitle.textContent = '';
+        convContent.innerHTML = '';
+      }
+
+      async function pickConversationsDir() {
+        if (!supportsDirPicker) {
+          alert('Your browser does not support selecting a folder. Use Chrome/Edge.');
+          return false;
+        }
+        try {
+          const dir = await window.showDirectoryPicker({ id: 'conversations' });
+          // Optional: check for any *.json files inside
+          conversationsDirHandle = dir;
+          btnLinkConversations.textContent = 'Conversations linked ✓';
+          btnLinkConversations.disabled = false;
+          return true;
+        } catch (e) {
+          if (e?.name !== 'AbortError') {
+            alert('Failed to link folder: ' + e.message);
+          }
+          return false;
+        }
+      }
+
+      function renderConversationJson(text) {
+        try {
+          const data = JSON.parse(text);
+          const msgs = Array.isArray(data.conversation) ? data.conversation : [];
+          convContent.innerHTML = msgs.map(m => {
+            const cls = m.speaker === 'agent' ? 'agent' : 'user';
+            const txt = escapeHtml(m.text || '');
+            const priv = m.private ? ' (private)' : '';
+            return `<div class="msg ${cls}"><div class="hint">${m.speaker}${priv}</div><div>${txt.replace(/\n/g,'<br>')}</div></div>`;
+          }).join('') || '<div class="hint">No messages.</div>';
+        } catch (e) {
+          convContent.innerHTML = `<div class="error">Invalid conversation JSON: ${escapeHtml(e.message)}</div>`;
+        }
       }
     </script>
   </body>
