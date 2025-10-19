@@ -238,6 +238,34 @@
         padding: 12px;
         border-bottom: 1px solid var(--border);
       }
+      .nav-controls {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .nav-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        background: var(--btn-secondary);
+        color: var(--text);
+        border: 1px solid var(--input-border);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .nav-btn:hover:not(:disabled) {
+        background: var(--btn-secondary-2);
+        border-color: var(--input-hover);
+      }
+      .nav-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
       .right .content {
         overflow: auto;
         padding: 16px;
@@ -255,7 +283,10 @@
       .steps .step-item { display: grid; grid-template-columns: 48px 1fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
       .steps .step-num { text-align: center; color: var(--muted); font-weight: 600; }
       .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-      .chip { background: #0f141a; border: 1px solid var(--border); padding: 4px 8px; border-radius: 999px; font-size: 12px; }
+      .chip { display: inline-flex; align-items: center; gap: 6px; background: var(--pill-bg); border: 1px solid var(--border); padding: 4px 8px; border-radius: 999px; font-size: 12px; }
+      .chip .remove { appearance: none; border: none; background: transparent; color: var(--muted); cursor: pointer; padding: 0 2px; font-size: 14px; line-height: 1; }
+      .chip .remove:hover { color: var(--danger); }
+      .grow { flex: 1; }
 
       .footer {
         display: flex;
@@ -316,7 +347,11 @@
             <button class="btn" id="btnDuplicate" disabled>Duplicate</button>
             <button class="btn destructive" id="btnDelete" disabled>Delete</button>
           </div>
-          <div class="hint" id="selectionHint">Select an issue to edit</div>
+          <div class="nav-controls">
+            <button class="nav-btn" id="btnPrev" disabled title="Previous issue">←</button>
+            <div class="hint" id="selectionHint">Select an issue to edit</div>
+            <button class="nav-btn" id="btnNext" disabled title="Next issue">→</button>
+          </div>
         </div>
         <div class="content" id="editor">
           <div class="grid2">
@@ -339,8 +374,12 @@
 
           <div class="grid2">
             <div class="field">
-              <div class="label">Keywords (comma separated)</div>
-              <textarea class="input small" id="f_keywords" placeholder="keyword1, keyword2"></textarea>
+              <div class="label">Keywords</div>
+              <div class="chips" id="keywordsChips"></div>
+              <div class="row" style="margin-top:8px;">
+                <input class="input grow" id="kwInput" placeholder="Add keyword and press Enter" />
+                <button class="btn" id="kwAdd">Add</button>
+              </div>
             </div>
             <div class="field">
               <div class="label">Tickets (comma separated IDs)</div>
@@ -406,7 +445,9 @@
       const f_issue_id = el('f_issue_id');
       const f_category = el('f_category');
       const f_short_description = el('f_short_description');
-      const f_keywords = el('f_keywords');
+      const keywordsChips = el('keywordsChips');
+      const kwInput = el('kwInput');
+      const kwAdd = el('kwAdd');
       const f_tickets = el('f_tickets');
       const f_root_cause = el('f_root_cause');
       const f_confidence = el('f_confidence');
@@ -429,6 +470,8 @@
       const btnDuplicate = el('btnDuplicate');
       const btnDelete = el('btnDelete');
       const btnAddStep = el('btnAddStep');
+      const btnPrev = el('btnPrev');
+      const btnNext = el('btnNext');
 
       const saveOk = el('saveOk');
       const saveErr = el('saveErr');
@@ -500,32 +543,60 @@
           btnDuplicate.disabled = true;
           btnDelete.disabled = true;
           selectionHint.textContent = 'Select an issue to edit';
+          updateNavButtons();
           return;
         }
         selectionHint.textContent = issue.issue_id;
         btnDuplicate.disabled = false;
         btnDelete.disabled = false;
         bindEditor(issue);
+        updateNavButtons();
+      }
+
+      function updateNavButtons() {
+        if (db.length === 0) {
+          btnPrev.disabled = true;
+          btnNext.disabled = true;
+          return;
+        }
+
+        btnPrev.disabled = selectedIndex <= 0;
+        btnNext.disabled = selectedIndex >= db.length - 1 || selectedIndex < 0;
+      }
+
+      function navigatePrev() {
+        if (selectedIndex > 0) {
+          selectIssue(selectedIndex - 1);
+        }
+      }
+
+      function navigateNext() {
+        if (selectedIndex < db.length - 1) {
+          selectIssue(selectedIndex + 1);
+        }
       }
 
       function clearEditor() {
         f_issue_id.value = '';
         f_category.value = '';
         f_short_description.value = '';
-        f_keywords.value = '';
+        // keywords: clear chips and input
+        if (keywordsChips) keywordsChips.innerHTML = '';
+        if (kwInput) kwInput.value = '';
         f_tickets.value = '';
         f_root_cause.value = '';
         f_confidence.value = '';
         f_notes.value = '';
         stepsContainer.innerHTML = '';
         [e_category, e_short_description, e_resolution_steps, e_global].forEach(n => n.textContent = '');
+        updateNavButtons();
       }
 
       function bindEditor(issue) {
         f_issue_id.value = issue.issue_id || '';
         f_category.value = issue.category || '';
         f_short_description.value = issue.short_description || '';
-        f_keywords.value = (issue.keywords || []).join(', ');
+        renderKeywords(issue.keywords || []);
         f_tickets.value = (issue.tickets || []).join(', ');
         f_root_cause.value = issue.root_cause || '';
         f_confidence.value = (typeof issue.confidence === 'number' ? issue.confidence : '').toString();
@@ -548,10 +619,14 @@
             <button class="btn destructive" title="Remove">✕</button>
           </div>
         `;
+        const stepInput = row.querySelector('.step-input');
         const [upBtn, downBtn, delBtn] = row.querySelectorAll('button');
+        if (stepInput) {
+          stepInput.addEventListener('input', () => { markDirtyFromEditor(); applyEditorToSelected(); });
+        }
         upBtn.addEventListener('click', () => moveStep(row, -1));
         downBtn.addEventListener('click', () => moveStep(row, +1));
-        delBtn.addEventListener('click', () => { row.remove(); markDirtyFromEditor(); renumberSteps(); });
+        delBtn.addEventListener('click', () => { row.remove(); markDirtyFromEditor(); renumberSteps(); applyEditorToSelected(); });
         stepsContainer.appendChild(row);
         if (index !== null) stepsContainer.insertBefore(row, stepsContainer.children[index] || null);
         renumberSteps();
@@ -565,6 +640,7 @@
         parent.insertBefore(row, parent.children[delta > 0 ? newIdx + 1 : newIdx]);
         markDirtyFromEditor();
         renumberSteps();
+        applyEditorToSelected();
       }
 
       function renumberSteps() {
@@ -584,7 +660,7 @@
       }
 
       function collectEditor() {
-        const keywords = f_keywords.value.split(',').map(s => s.trim()).filter(Boolean);
+        const keywords = collectKeywords();
         const tickets = f_tickets.value.split(',').map(s => s.trim()).filter(Boolean).map(s => Number(s)).filter(n => Number.isInteger(n));
         const steps = Array.from(stepsContainer.querySelectorAll('.step-input'))
           .map(i => i.value.trim())
@@ -677,6 +753,7 @@
         setDirty(true);
         renderList();
         selectIssue(db.length - 1);
+        updateNavButtons();
       }
 
       function duplicateIssue() {
@@ -688,6 +765,7 @@
         setDirty(true);
         renderList();
         selectIssue(db.length - 1);
+        updateNavButtons();
       }
 
       function deleteIssue() {
@@ -695,10 +773,19 @@
         const id = db[selectedIndex].issue_id;
         if (!confirm(`Delete ${id}?`)) return;
         db.splice(selectedIndex, 1);
-        selectedIndex = -1;
+
+        // Adjust selectedIndex after deletion
+        if (selectedIndex >= db.length && db.length > 0) {
+          selectedIndex = db.length - 1;
+        }
+
         setDirty(true);
         renderList();
-        clearEditor();
+        if (db.length > 0) {
+          selectIssue(selectedIndex);
+        } else {
+          clearEditor();
+        }
       }
 
       async function openFileFS() {
@@ -783,19 +870,26 @@
       }
 
       function loadJsonText(text) {
+        let parsed;
         try {
-          const parsed = JSON.parse(text);
-          if (!Array.isArray(parsed)) throw new Error('Expected a JSON array at top level');
-          db = parsed;
-          selectedIndex = -1;
-          setDirty(false);
-          e_global.textContent = '';
-          renderList();
-          clearEditor();
-          if (db.length) selectIssue(0);
+          parsed = JSON.parse(text);
         } catch (e) {
           e_global.textContent = 'Invalid JSON: ' + e.message;
+          return;
         }
+        if (!Array.isArray(parsed)) {
+          e_global.textContent = 'Invalid JSON: Expected a JSON array at top level';
+          return;
+        }
+
+        db = parsed;
+        selectedIndex = -1;
+        setDirty(false);
+        e_global.textContent = '';
+        renderList();
+        clearEditor();
+        updateNavButtons();
+        if (db.length) selectIssue(0);
       }
 
       function newDb() {
@@ -805,6 +899,7 @@
         setDirty(false);
         renderList();
         clearEditor();
+        updateNavButtons();
         fileStatus.textContent = 'Untitled';
         currentFileHandle = null;
         btnSave.disabled = !supportsFS;
@@ -827,11 +922,59 @@
       btnAdd.addEventListener('click', addIssue);
       btnDuplicate.addEventListener('click', duplicateIssue);
       btnDelete.addEventListener('click', deleteIssue);
-      btnAddStep.addEventListener('click', () => { addStepRow(''); markDirtyFromEditor(); });
+      btnAddStep.addEventListener('click', () => { addStepRow(''); markDirtyFromEditor(); applyEditorToSelected(); });
+      btnPrev.addEventListener('click', navigatePrev);
+      btnNext.addEventListener('click', navigateNext);
 
-      [f_category, f_short_description, f_keywords, f_tickets, f_root_cause, f_confidence, f_notes].forEach(input => {
+      [f_category, f_short_description, f_tickets, f_root_cause, f_confidence, f_notes].forEach(input => {
         input.addEventListener('input', () => { applyEditorToSelected(); });
       });
+
+      // Keywords chips interactions
+      kwAdd.addEventListener('click', addKeywordFromInput);
+      kwInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); addKeywordFromInput(); }
+      });
+
+      function renderKeywords(list) {
+        keywordsChips.innerHTML = '';
+        (list || []).forEach(kw => {
+          const chip = document.createElement('span');
+          chip.className = 'chip';
+          chip.innerHTML = `${escapeHtml(kw)} <button class="remove" title="Remove">×</button>`;
+          chip.querySelector('.remove').addEventListener('click', () => {
+            chip.remove();
+            markDirtyFromEditor();
+            applyEditorToSelected();
+          });
+          keywordsChips.appendChild(chip);
+        });
+      }
+
+      function addKeywordFromInput() {
+        const v = kwInput.value.trim();
+        if (!v) return;
+        const existing = new Set(collectKeywords().map(x => x.toLowerCase()));
+        if (existing.has(v.toLowerCase())) { kwInput.value = ''; return; }
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.innerHTML = `${escapeHtml(v)} <button class="remove" title="Remove">×</button>`;
+        chip.querySelector('.remove').addEventListener('click', () => {
+          chip.remove();
+          markDirtyFromEditor();
+          applyEditorToSelected();
+        });
+        keywordsChips.appendChild(chip);
+        kwInput.value = '';
+        markDirtyFromEditor();
+        applyEditorToSelected();
+      }
+
+      function collectKeywords() {
+        return Array.from(keywordsChips.querySelectorAll('.chip'))
+          .map(ch => ch.textContent.replace('×','').trim())
+          .filter(Boolean);
+      }
 
       searchInput.addEventListener('input', renderList);
       categoryFilter.addEventListener('change', renderList);
