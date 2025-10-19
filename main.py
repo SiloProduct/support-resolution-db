@@ -33,7 +33,7 @@ def run(
         ticket_ids = fetch_resolved_ticket_ids(pages)
     logging.info("%d tickets to process", len(ticket_ids))
 
-    clusterer = IssueClusterer(load_existing=True)
+    clusterer = IssueClusterer(load_existing=True, db_path=output)
 
     from data_fetcher import fetch_ticket  # local import to avoid circular
     from conversation_utils import load_conversation

@@ -13,9 +13,12 @@ _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class IssueClusterer:
-    def __init__(self, load_existing: bool = True):
+    def __init__(self, load_existing: bool = True, db_path: Path | None = None):
+        self._db_path: Path = Path(db_path) if db_path else Path("output/silo_issues_db.json")
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+
         self.issues: List[Dict[str, Any]] = []
-        if load_existing:
+        if load_existing and self._db_path.exists():
             self._load()
 
     # -------------------- Query helpers --------------------
@@ -24,14 +27,11 @@ class IssueClusterer:
         return any(ticket_id in issue.get("tickets", []) for issue in self.issues)
 
     # -------------------- Persistence --------------------
-    _DB_PATH = _OUTPUT_DIR / "silo_issues_db.json"
-
     def _load(self):
-        if self._DB_PATH.exists():
-            self.issues = json.loads(self._DB_PATH.read_text())
+        self.issues = json.loads(self._db_path.read_text()) if self._db_path.exists() else []
 
     def save(self, path: str | Path | None = None):
-        out_path = Path(path) if path else self._DB_PATH
+        out_path = Path(path) if path else self._db_path
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(self.issues, ensure_ascii=False, indent=2))
 
@@ -42,8 +42,9 @@ class IssueClusterer:
             short_desc = issue.get("short_description", "")
             root_cause = issue.get("root_cause", "")
             keywords = ", ".join(issue.get("keywords", []))
+            tickets = ", ".join(str(tid) for tid in issue.get("tickets", []))
             summary_lines.append(
-                f"{issue['issue_id']}: {issue.get('category', '')} / {short_desc} / {root_cause} | {keywords}"
+                f"{issue['issue_id']}: {issue.get('category', '')} / {short_desc} / {root_cause} | {keywords} | Linked tickets: {tickets}"
             )
         return "\n".join(summary_lines) or "<none>"
 
@@ -84,15 +85,39 @@ class IssueClusterer:
 
     # -------------------- Merge Logic --------------------
     def _merge(self, issue_data: Dict[str, Any], ticket_id: int):
+        # -----------------------------------------------
+        # Helper: generate next sequential ISSUE-XXXX id
+        # -----------------------------------------------
+        def _next_issue_id() -> str:
+            max_num = 0
+            for iss in self.issues:
+                try:
+                    num = int(iss["issue_id"].split("-")[-1])
+                    max_num = max(max_num, num)
+                except (KeyError, ValueError):
+                    continue
+            return f"ISSUE-{max_num + 1:04d}"
+
+        # If low confidence or missing id -> treat as new, *unless* this ticket already exists
         if issue_data.get("confidence", 0) < 0.7 or not issue_data.get("issue_id"):
-            # Invent new ID
-            new_id = f"ISSUE-{len(self.issues)+1:04d}"
+            for iss in self.issues:
+                if ticket_id in iss.get("tickets", []):
+                    # Update existing issue instead of creating duplicate
+                    iss.setdefault("tickets", [])
+                    # Copy over any improved details from issue_data
+                    for key, val in issue_data.items():
+                        if key != "tickets" and val:
+                            iss[key] = val
+                    return
+
+            # Otherwise invent new ID
+            new_id = _next_issue_id()
             issue_data["issue_id"] = new_id
             issue_data["tickets"] = [ticket_id]
             self.issues.append(issue_data)
             return
 
-        # Find existing issue
+        # Find existing issue by id
         for issue in self.issues:
             if issue["issue_id"] == issue_data["issue_id"]:
                 # Update existing issue with latest details (replace fields except "tickets")

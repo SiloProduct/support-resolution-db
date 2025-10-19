@@ -11,6 +11,7 @@ You will be given a customer technical support conversation and a list of existi
 You must decide whether the conversation matches any *existing* issue, or if it is a *brand new* issue never seen before.
 - If the conversation **matches** an existing issue, you will **update** that issue's data with any new, valuable information or corrections from the current conversation.
 - If the conversation describes a **new** issue, you will **create** a new issue record.
+Note that the conversation may arrive from a previously reprocessed ticket with either new information, or without.
 
 Your job is to classify the conversation and return a single structured JSON object strictly following the schema and instructions below.
 

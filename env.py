@@ -12,9 +12,6 @@ load_dotenv(override=True)
 _REQUIRED_VARS = [
     "FRESHDESK_DOMAIN",
     "FRESHDESK_API_KEY",
-    "LLM_API_BASE_URL",
-    "LLM_API_KEY",
-    "LLM_MODEL",
 ]
 
 

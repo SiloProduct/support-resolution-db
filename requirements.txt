@@ -2,3 +2,6 @@ requests>=2.32.4
 python-dotenv>=1.1.1
 tqdm>=4.67.1
 backoff>=2.2.1 
+typer>=0.12.0
+rich>=13.7.0
+questionary>=2.0.1 
