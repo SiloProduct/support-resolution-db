@@ -190,7 +190,7 @@
         padding: 12px;
         border-bottom: 1px solid var(--border);
         display: grid;
-        grid-template-columns: 1fr 120px;
+        grid-template-columns: 1fr 120px auto;
         gap: 8px;
       }
       .input, select {
@@ -207,6 +207,7 @@
       .input:hover, select:hover {
         border-color: var(--input-hover);
       }
+      .input:disabled { opacity: 0.7; cursor: not-allowed; }
       .left .list { padding: 6px 8px 10px 8px; overflow: auto; height: 100%; box-sizing: border-box; }
       .card {
         border: 1px solid var(--border);
@@ -310,6 +311,7 @@
       .msg.agent { background: rgba(79,140,255,0.08); }
       .msg.user { background: rgba(243, 156, 18, 0.08); }
       .modal .m-footer { padding: 10px 12px; border-top: 1px solid var(--border); display:flex; justify-content:flex-end; }
+      .json-textarea { width: 100%; min-height: 50vh; background: var(--input-bg); color: var(--text); border: 1px solid var(--input-border); border-radius: 10px; padding: 10px 12px; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 13px; }
 
       @media (max-width: 1100px) {
         .app { grid-template-columns: 1fr; height: auto; }
@@ -327,7 +329,7 @@
       <button class="btn" id="btnOpen" title="Open JSON file"><span>Open</span></button>
       <button class="btn primary" id="btnSave" title="Save to the same file" disabled><span>Save</span></button>
       <button class="btn" id="btnSaveAs" title="Save As… (choose a new file)"><span>Save As…</span></button>
-      <button class="btn" id="btnExport" title="Download a copy"><span>Export</span></button>
+      
       <button class="btn" id="btnCopy" title="Copy JSON to clipboard"><span>Copy</span></button>
       <button class="btn secondary" id="btnNew" title="Create new empty DB"><span>New</span></button>
 
@@ -349,6 +351,7 @@
           <select id="categoryFilter">
             <option value="">All categories</option>
           </select>
+          <button class="btn" id="searchClear" title="Clear" style="padding:6px 10px;">Clear</button>
         </div>
         <div class="list" id="issuesList"></div>
       </div>
@@ -359,6 +362,7 @@
             <button class="btn" id="btnAdd">Add</button>
             <button class="btn" id="btnDuplicate" disabled>Duplicate</button>
             <button class="btn destructive" id="btnDelete" disabled>Delete</button>
+            <button class="btn" id="btnEditJson" title="Edit issue as JSON">Edit JSON</button>
           </div>
           <div class="nav-controls">
             <button class="nav-btn" id="btnPrev" disabled title="Previous issue">←</button>
@@ -370,7 +374,7 @@
           <div class="grid2">
             <div class="field">
               <div class="label">Issue ID</div>
-              <input class="input" id="f_issue_id" readonly />
+              <input class="input" id="f_issue_id" readonly disabled />
             </div>
             <div class="field">
               <div class="label">Category</div>
@@ -452,6 +456,23 @@
       </div>
     </div>
 
+    <!-- JSON Editor Modal -->
+    <div class="modal-backdrop" id="jsonBackdrop">
+      <div class="modal">
+        <div class="m-header">
+          <div class="m-title">Edit Issue JSON</div>
+        </div>
+        <div class="m-content">
+          <textarea class="json-textarea" id="jsonTextarea"></textarea>
+          <div class="error" id="jsonError" style="margin-top:8px;"></div>
+        </div>
+        <div class="m-footer">
+          <button class="btn" id="jsonCancel">Cancel</button>
+          <button class="btn primary" id="jsonSave">Save</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       // Application state
       /** @type {Array<any>} */
@@ -498,7 +519,7 @@
       const btnOpen = el('btnOpen');
       const btnSave = el('btnSave');
       const btnSaveAs = el('btnSaveAs');
-      const btnExport = el('btnExport');
+      
       const btnCopy = el('btnCopy');
       const btnNew = el('btnNew');
       const btnTheme = el('btnTheme');
@@ -508,6 +529,7 @@
       const btnAddStep = el('btnAddStep');
       const btnPrev = el('btnPrev');
       const btnNext = el('btnNext');
+      const btnEditJson = el('btnEditJson');
 
       const saveOk = el('saveOk');
       const saveErr = el('saveErr');
@@ -516,6 +538,11 @@
       const convContent = el('convContent');
       const convClose2 = el('convClose2');
       const convFreshdesk = el('convFreshdesk');
+      const jsonBackdrop = el('jsonBackdrop');
+      const jsonTextarea = el('jsonTextarea');
+      const jsonError = el('jsonError');
+      const jsonCancel = el('jsonCancel');
+      const jsonSave = el('jsonSave');
 
       const supportsFS = 'showOpenFilePicker' in window && 'showSaveFilePicker' in window;
       const supportsDirPicker = 'showDirectoryPicker' in window;
@@ -965,7 +992,7 @@
       });
       btnSave.addEventListener('click', async () => { try { await saveFileFS(); } catch (e) { console.error(e); showToast(saveErr); } });
       btnSaveAs.addEventListener('click', async () => { try { await saveAsFS(); } catch (e) { if (e?.name !== 'AbortError') { console.error(e); showToast(saveErr); } } });
-      btnExport.addEventListener('click', exportDownload);
+      
       btnCopy.addEventListener('click', copyJson);
       btnNew.addEventListener('click', newDb);
       btnTheme.addEventListener('click', toggleTheme);
@@ -977,6 +1004,9 @@
           window.open(`https://heysilo-help.freshdesk.com/a/tickets/${id}`, '_blank', 'noopener');
         }
       });
+      btnEditJson.addEventListener('click', openJsonEditor);
+      jsonCancel.addEventListener('click', closeJsonEditor);
+      jsonSave.addEventListener('click', saveJsonEditor);
       btnLinkConversations.addEventListener('click', async () => {
         await pickConversationsDir();
       });
@@ -1097,6 +1127,15 @@
       }
 
       searchInput.addEventListener('input', renderList);
+      const searchClear = el('searchClear');
+      if (searchClear) {
+        searchClear.addEventListener('click', () => {
+          searchInput.value = '';
+          categoryFilter.value = '';
+          renderList();
+          searchInput.focus();
+        });
+      }
       categoryFilter.addEventListener('change', renderList);
 
       // Environment setup
@@ -1170,6 +1209,72 @@
         convBackdrop.style.display = 'none';
         convTitle.textContent = '';
         convContent.innerHTML = '';
+      }
+
+      function openJsonEditor() {
+        if (selectedIndex < 0 || !db[selectedIndex]) return;
+        jsonError.textContent = '';
+        // Build a clean object with the persisted fields
+        const issue = db[selectedIndex];
+        const safe = {
+          issue_id: issue.issue_id || '',
+          category: issue.category || '',
+          short_description: issue.short_description || '',
+          keywords: Array.isArray(issue.keywords) ? issue.keywords : [],
+          root_cause: issue.root_cause || '',
+          resolution_steps: Array.isArray(issue.resolution_steps) ? issue.resolution_steps : [],
+          confidence: typeof issue.confidence === 'number' ? issue.confidence : null,
+          notes: issue.notes || '',
+          tickets: Array.isArray(issue.tickets) ? issue.tickets : []
+        };
+        jsonTextarea.value = JSON.stringify(safe, null, 2);
+        jsonBackdrop.style.display = 'flex';
+      }
+
+      function closeJsonEditor() {
+        jsonBackdrop.style.display = 'none';
+        jsonTextarea.value = '';
+        jsonError.textContent = '';
+      }
+
+      function saveJsonEditor() {
+        if (selectedIndex < 0 || !db[selectedIndex]) return;
+        jsonError.textContent = '';
+        let parsed;
+        try {
+          parsed = JSON.parse(jsonTextarea.value);
+        } catch (e) {
+          jsonError.textContent = 'Invalid JSON: ' + e.message;
+          return;
+        }
+        // Validate minimal schema
+        const errs = validateIssue({
+          issue_id: parsed.issue_id,
+          category: parsed.category,
+          short_description: parsed.short_description,
+          keywords: parsed.keywords,
+          root_cause: parsed.root_cause,
+          resolution_steps: parsed.resolution_steps,
+          confidence: parsed.confidence,
+          notes: parsed.notes,
+          tickets: parsed.tickets
+        });
+        if (Object.keys(errs).length) {
+          jsonError.textContent = 'Validation failed: ' + Object.keys(errs).join(', ');
+          return;
+        }
+        // Coerce types
+        parsed.keywords = Array.isArray(parsed.keywords) ? parsed.keywords.map(String) : [];
+        parsed.tickets = Array.isArray(parsed.tickets) ? parsed.tickets.map(Number).filter(n => Number.isInteger(n)) : [];
+        parsed.resolution_steps = Array.isArray(parsed.resolution_steps) ? parsed.resolution_steps.map(String) : [];
+        if (parsed.confidence !== null && parsed.confidence !== undefined) parsed.confidence = clamp(Number(parsed.confidence), 0, 1);
+
+        // Apply to DB and UI
+        db[selectedIndex] = { ...db[selectedIndex], ...parsed };
+        setDirty(true);
+        renderList();
+        bindEditor(db[selectedIndex]);
+        closeJsonEditor();
       }
 
       async function pickConversationsDir() {
