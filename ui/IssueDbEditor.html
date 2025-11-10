@@ -186,6 +186,7 @@
       }
 
       .left { display: flex; flex-direction: column; min-height: 0; }
+      .left .top-actions { padding: 8px 12px 0 12px; }
       .left .search {
         padding: 12px;
         border-bottom: 1px solid var(--border);
@@ -346,6 +347,9 @@
 
     <div class="app">
       <div class="panel left">
+        <div class="top-actions">
+          <button class="btn secondary" id="btnReassignIds" title="Reassign issue IDs sequentially" style="padding:6px 10px; font-size:12px;">Reassign IDs</button>
+        </div>
         <div class="search">
           <input class="input" id="searchInput" placeholder="Search issues…" />
           <select id="categoryFilter">
@@ -543,6 +547,7 @@
       const jsonError = el('jsonError');
       const jsonCancel = el('jsonCancel');
       const jsonSave = el('jsonSave');
+      const btnReassignIds = el('btnReassignIds');
 
       const supportsFS = 'showOpenFilePicker' in window && 'showSaveFilePicker' in window;
       const supportsDirPicker = 'showDirectoryPicker' in window;
@@ -1007,6 +1012,7 @@
       btnEditJson.addEventListener('click', openJsonEditor);
       jsonCancel.addEventListener('click', closeJsonEditor);
       jsonSave.addEventListener('click', saveJsonEditor);
+      if (btnReassignIds) btnReassignIds.addEventListener('click', reassignIssueIdsSequentially);
       btnLinkConversations.addEventListener('click', async () => {
         await pickConversationsDir();
       });
@@ -1275,6 +1281,22 @@
         renderList();
         bindEditor(db[selectedIndex]);
         closeJsonEditor();
+      }
+
+      function reassignIssueIdsSequentially() {
+        if (!Array.isArray(db) || db.length === 0) return;
+        // Sort by current numeric order if possible
+        const items = [...db].map((item, idx) => ({ item, idx, num: parseInt(String(item.issue_id||'').match(/\d+/)?.[0] || idx+1, 10) }));
+        items.sort((a,b) => a.num - b.num || a.idx - b.idx);
+        items.forEach((entry, i) => {
+          entry.item.issue_id = `ISSUE-${String(i + 1).padStart(4, '0')}`;
+        });
+        setDirty(true);
+        renderList();
+        // Keep current selection by index if still valid
+        if (selectedIndex >= 0 && selectedIndex < db.length) {
+          selectIssue(selectedIndex);
+        }
       }
 
       async function pickConversationsDir() {
