@@ -273,8 +273,9 @@
       textarea.input { min-height: 80px; resize: vertical; }
       textarea.input.small { min-height: 56px; }
       .row { display: flex; gap: 8px; align-items: center; }
-      .steps .step-item { display: grid; grid-template-columns: 48px 1fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
+      .steps .step-item { display: grid; grid-template-columns: auto 48px 1fr; gap: 8px; margin-bottom: 8px; align-items: center; }
       .steps .step-num { text-align: center; color: var(--muted); font-weight: 600; }
+      .steps .step-controls { display: inline-flex; gap: 6px; align-items: center; }
       .chips { display: flex; flex-wrap: wrap; gap: 6px; }
       .chip { display: inline-flex; align-items: center; gap: 6px; background: var(--pill-bg); border: 1px solid var(--border); padding: 4px 8px; border-radius: 999px; font-size: 12px; }
       .chip .remove { appearance: none; border: none; background: transparent; color: var(--muted); cursor: pointer; padding: 0 2px; font-size: 14px; line-height: 1; }
@@ -330,7 +331,7 @@
       <button class="btn" id="btnOpen" title="Open JSON file"><span>Open</span></button>
       <button class="btn primary" id="btnSave" title="Save to the same file" disabled><span>Save</span></button>
       <button class="btn" id="btnSaveAs" title="Save As… (choose a new file)"><span>Save As…</span></button>
-      
+      <button class="btn" id="btnExportContext" title="Export without confidence and tickets"><span>Export as Context</span></button>
       <button class="btn" id="btnCopy" title="Copy JSON to clipboard"><span>Copy</span></button>
       <button class="btn secondary" id="btnNew" title="Create new empty DB"><span>New</span></button>
 
@@ -523,6 +524,7 @@
       const btnOpen = el('btnOpen');
       const btnSave = el('btnSave');
       const btnSaveAs = el('btnSaveAs');
+      const btnExportContext = el('btnExportContext');
       
       const btnCopy = el('btnCopy');
       const btnNew = el('btnNew');
@@ -564,6 +566,28 @@
 
       function serializeDb() {
         return JSON.stringify(db, null, 2) + '\n';
+      }
+
+      function serializeDbContext() {
+        const cleaned = db.map(issue => {
+          if (!issue) return {};
+          const clone = JSON.parse(JSON.stringify(issue));
+          delete clone.confidence;
+          delete clone.tickets;
+          return clone;
+        });
+        return JSON.stringify(cleaned, null, 2) + '\n';
+      }
+
+      function downloadText(text, filename, mime = 'application/json') {
+        const blob = new Blob([text], { type: mime });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        URL.revokeObjectURL(a.href);
+        a.remove();
       }
 
       function refreshCategoryOptions() {
@@ -686,13 +710,13 @@
         const row = document.createElement('div');
         row.className = 'step-item';
         row.innerHTML = `
-          <div class="step-num"></div>
-          <input class="input step-input" value="${escapeHtml(stripStepNumber(text))}" />
-          <div class="row">
+          <div class="step-controls">
             <button class="btn" title="Move up">↑</button>
             <button class="btn" title="Move down">↓</button>
             <button class="btn destructive" title="Remove">✕</button>
           </div>
+          <div class="step-num"></div>
+          <input class="input step-input" value="${escapeHtml(stripStepNumber(text))}" />
         `;
         const stepInput = row.querySelector('.step-input');
         const [upBtn, downBtn, delBtn] = row.querySelectorAll('button');
@@ -910,15 +934,40 @@
         showToast(saveOk);
       }
 
+      async function exportContext() {
+        const content = serializeDbContext();
+        if (supportsFS) {
+          try {
+            let suggestedName = 'silo_issues_context.md';
+            if (currentFileHandle) {
+              try {
+                const curFile = await currentFileHandle.getFile();
+                if (curFile && curFile.name) {
+                  suggestedName = curFile.name.replace(/\.json$/i, '_context.md');
+                }
+              } catch (_) {
+                // ignore, fallback to default name
+              }
+            }
+            const handle = await window.showSaveFilePicker({
+              suggestedName,
+              types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }]
+            });
+            const writable = await handle.createWritable();
+            await writable.write(content);
+            await writable.close();
+          } catch (e) {
+            if (e?.name === 'AbortError') return;
+            console.error(e);
+            downloadText(content, 'silo_issues_context.md', 'text/markdown');
+          }
+        } else {
+          downloadText(content, 'silo_issues_context.md', 'text/markdown');
+        }
+      }
+
       function exportDownload() {
-        const blob = new Blob([serializeDb()], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'silo_issues_db.json';
-        document.body.appendChild(a);
-        a.click();
-        URL.revokeObjectURL(a.href);
-        a.remove();
+        downloadText(serializeDb(), 'silo_issues_db.json', 'application/json');
       }
 
       async function copyJson() {
@@ -1142,6 +1191,7 @@
           searchInput.focus();
         });
       }
+      if (btnExportContext) btnExportContext.addEventListener('click', exportContext);
       categoryFilter.addEventListener('change', renderList);
 
       // Environment setup
