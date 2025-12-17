@@ -13,6 +13,8 @@ For each customer support conversation and provided issue list, determine if the
 
 - If the conversation **matches an existing issue**, update its data with any new, valuable details from the conversation.
 - If the issue is **new**, create a new issue record.
+- If the conversation includes multiple issues, classify only the primary issue; ignore the rest.
+- When updating an existing issue, only add details that directly relate to that issue’s symptoms, root cause, or resolution and ignore unrelated topics (e.g., secondary issues, feature requests/feedback).
 - Conversations may be reprocessed tickets and could contain new or unchanged information.
 
 Return a single JSON object that strictly follows the schema below. All fields are required, with correct types.
@@ -49,11 +51,11 @@ Set confidence based on match strength:
    - 'Shipping & Account': Orders, delivery, user account management.
    - 'Other': For any other issue that does not fit into the above categories including non technical questions, feature requests and feedback.
 3. **short_description**: One concise sentence summarizing the problem; update for clarity as needed. (e.g. "Device gets stuck on 'Connected to WiFi' screen and fails to complete onboarding.")
-4. **keywords**: Up to 6 main user/agent terms or errors, useful for search.
+4. **keywords**: Main user/agent terms or errors, useful for search.
 5. **root_cause**: State the technical cause. If unknown or not technical, say so (e.g., "Not a technical issue: feature request").
-6. **resolution_steps**: Clear, stepwise instructions for diagnosis and solution. Add steps if new info is available. Use exsisting steps as tone reference for new steps.
+6. **resolution_steps**: Clear, stepwise, numbered ("1. ", "2. ", "3. ", etc.) instructions for diagnosis and solution. Add steps if new info is available. Use exsisting steps as tone reference for new steps.
 7. **confidence**: Float, as per framework above.
-8. **notes**: Notable resolution notes for the support agent (e.g., “Happens only on firmware v9.01.29 and lower”,"may require a device replacement"). Do not include a specific ticket's details (e.g. "the user reported..."). Do not include reasoning logic.
+8. **notes**: Notable notes for the support agent for resolving this issue in the future (e.g., “Happens only on firmware v9.01.29 and lower”,"may require a device replacement"). **DO NOT** include user reporting details (e.g. "the user reported..."). Do not include reasoning logic.
 
 All output must be a single JSON object only—no code blocks, extra text, or omitted fields.
 

@@ -4,4 +4,5 @@ tqdm>=4.67.1
 backoff>=2.2.1 
 typer>=0.12.0
 rich>=13.7.0
-questionary>=2.0.1 
+questionary>=2.0.1
+litellm>=1.80.0 

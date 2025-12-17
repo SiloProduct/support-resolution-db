@@ -43,7 +43,7 @@ def _fetch_and_analyze_conversations(db_path: Path):
     from data_fetcher import fetch_resolved_ticket_ids, fetch_ticket
     from conversation_utils import (
         CONVERSATIONS_DIR, build_conversation, save_conversation, 
-        load_conversation, backfill_ignore_flags, is_ignored
+        load_conversation, backfill_ignore_flags, backfill_auto_ignore, is_ignored
     )
     
     console.print("\n[bold cyan]═══ Fetch & Analyze Conversations ═══[/bold cyan]\n")
@@ -55,6 +55,14 @@ def _fetch_and_analyze_conversations(db_path: Path):
         console.print(f"  Added 'ignore: false' to [yellow]{updated}[/yellow] conversations.\n")
     else:
         console.print(f"  All [green]{checked}[/green] conversations already have the flag.\n")
+    
+    # Step 0b: Auto-ignore tickets with automated system messages
+    console.print("[cyan]Step 0b:[/cyan] Auto-ignoring tickets with automated system messages...")
+    checked, auto_ignored = backfill_auto_ignore()
+    if auto_ignored > 0:
+        console.print(f"  Auto-ignored [yellow]{auto_ignored}[/yellow] tickets (follow-ups/merges).\n")
+    else:
+        console.print(f"  No new tickets to auto-ignore.\n")
     
     # Ask how many pages to fetch
     pages_str = questionary.text(
@@ -353,9 +361,18 @@ def process_command(
     default_db_path = Path("output/silo_issues_db.json")
     if safe_output and output == default_db_path and output.exists():
         from datetime import datetime
+        import os as _os
+        from config import AVAILABLE_MODELS
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output = output.parent / f"silo_issues_db_{ts}.json"
+        # Resolve the model name (from flag, env var, or default)
+        model_name = model or _os.getenv("LLM_MODEL", AVAILABLE_MODELS[0]["model"])
+        # Sanitize model name for use in filename (replace / with -)
+        safe_model_name = model_name.replace("/", "-")
+        
+        test_runs_dir = Path("output/test-runs")
+        test_runs_dir.mkdir(parents=True, exist_ok=True)
+        output = test_runs_dir / f"silo_issues_db_{ts}_{safe_model_name}.json"
         typer.echo(f"[info] Existing DB preserved. Writing to {output}")
 
         if default_db_path.exists():
@@ -544,7 +561,7 @@ def fetch_command(
     from data_fetcher import fetch_resolved_ticket_ids, fetch_ticket
     from conversation_utils import (
         CONVERSATIONS_DIR, build_conversation, save_conversation,
-        backfill_ignore_flags, is_ignored
+        backfill_ignore_flags, backfill_auto_ignore, is_ignored
     )
     
     console.print("\n[bold cyan]═══ Fetch & Analyze Conversations ═══[/bold cyan]\n")
@@ -556,6 +573,14 @@ def fetch_command(
         console.print(f"  Added 'ignore: false' to [yellow]{updated}[/yellow] conversations.\n")
     else:
         console.print(f"  All [green]{checked}[/green] conversations already have the flag.\n")
+    
+    # Step 0b: Auto-ignore tickets with automated system messages
+    console.print("[cyan]Step 0b:[/cyan] Auto-ignoring tickets with automated system messages...")
+    checked, auto_ignored = backfill_auto_ignore()
+    if auto_ignored > 0:
+        console.print(f"  Auto-ignored [yellow]{auto_ignored}[/yellow] tickets (follow-ups/merges).\n")
+    else:
+        console.print(f"  No new tickets to auto-ignore.\n")
     
     # Step 1: Fetch ticket IDs from Freshdesk
     console.print(f"[cyan]Step 1:[/cyan] Fetching ticket IDs from Freshdesk ({pages} pages)...")

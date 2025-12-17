@@ -9,6 +9,28 @@ from typing import Any, Dict, List
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _CTRL_CHAR_RE = re.compile(r"[\r\x0b\x0c]")
 
+# Automated agent messages that indicate the ticket should be ignored
+AUTO_IGNORE_PHRASES = [
+    "We wanted to check in since we haven't heard back from you",
+    "This ticket is closed and merged",
+]
+
+
+def _normalize_apostrophes(text: str) -> str:
+    """Normalize curly apostrophes to straight apostrophes for consistent matching."""
+    # Replace various Unicode apostrophe/quote characters with straight apostrophe
+    # Using explicit Unicode escapes to avoid encoding issues:
+    # \u2019 = right single quotation mark (')
+    # \u2018 = left single quotation mark (')
+    # \u02bc = modifier letter apostrophe (ʼ)
+    # \u2032 = prime (′)
+    return (text
+        .replace("\u2019", "'")
+        .replace("\u2018", "'")
+        .replace("\u02bc", "'")
+        .replace("\u2032", "'")
+    )
+
 CONVERSATIONS_DIR = Path("conversations")
 CONVERSATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -18,6 +40,24 @@ def _clean_text(text: str) -> str:
     text_no_html = _HTML_TAG_RE.sub("", text or "")
     text_no_ctrl = _CTRL_CHAR_RE.sub("", text_no_html)
     return text_no_ctrl.strip()
+
+
+def should_auto_ignore(messages: List[Dict[str, Any]]) -> bool:
+    """Check if a conversation should be auto-ignored based on the last message.
+    
+    Returns True if the last message is from an agent and contains one of the
+    automated system message phrases (e.g., follow-up check-ins or merge notices).
+    """
+    if not messages:
+        return False
+    
+    last_msg = messages[-1]
+    if last_msg.get("speaker") != "agent":
+        return False
+    
+    # Normalize apostrophes for consistent matching (curly → straight)
+    text = _normalize_apostrophes(last_msg.get("text", ""))
+    return any(phrase in text for phrase in AUTO_IGNORE_PHRASES)
 
 
 def build_conversation(ticket: Dict[str, Any]) -> Dict[str, Any]:
@@ -39,7 +79,9 @@ def build_conversation(ticket: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
 
-    return {"ticket_id": ticket_id, "conversation": messages, "ignore": False}
+    # Auto-ignore tickets with automated system messages as last message
+    ignore = should_auto_ignore(messages)
+    return {"ticket_id": ticket_id, "conversation": messages, "ignore": ignore}
 
 
 def save_conversation(conv: Dict[str, Any]) -> Path:
@@ -98,4 +140,38 @@ def is_ignored(ticket_id: int) -> bool:
     conv = load_conversation(ticket_id)
     if conv is None:
         return False
-    return conv.get("ignore", False) 
+    return conv.get("ignore", False)
+
+
+def backfill_auto_ignore() -> tuple[int, int]:
+    """Apply auto-ignore logic to all existing conversations.
+    
+    Checks each conversation and sets ignore=True if it matches the auto-ignore
+    criteria (last message is an automated agent message). Does NOT un-ignore
+    conversations that were manually ignored for other reasons.
+    
+    Returns (total_checked, total_auto_ignored) counts.
+    """
+    total_checked = 0
+    total_auto_ignored = 0
+    
+    for path in CONVERSATIONS_DIR.glob("*.json"):
+        try:
+            with path.open("r", encoding="utf-8") as fp:
+                conv = json.load(fp)
+            total_checked += 1
+            
+            # Skip if already ignored
+            if conv.get("ignore", False):
+                continue
+            
+            messages = conv.get("conversation", [])
+            if should_auto_ignore(messages):
+                conv["ignore"] = True
+                with path.open("w", encoding="utf-8") as fp:
+                    json.dump(conv, fp, ensure_ascii=False, indent=2)
+                total_auto_ignored += 1
+        except (json.JSONDecodeError, IOError):
+            continue
+    
+    return total_checked, total_auto_ignored

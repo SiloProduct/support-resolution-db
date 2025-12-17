@@ -21,20 +21,24 @@ load_dotenv(override=True)
 LLM_PROVIDERS: Dict[str, Dict[str, str]] = {
     "openai": {
         "api_key_env_var": "OPENAI_API_KEY",
-        "base_url": "https://api.openai.com/v1/chat/completions",
     },
     "groq": {
         "api_key_env_var": "GROQ_API_KEY",
-        "base_url": "https://api.groq.com/openai/v1/chat/completions",
+    },
+    "gemini": {
+        "api_key_env_var": "GEMINI_API_KEY",
     },
 }
 
 # List of supported models. Each entry maps a model name to its provider.
-AVAILABLE_MODELS: List[Dict[str, str]] = [
-    {"model": "gpt-4.1", "provider": "openai"},
-    {"model": "gpt-5.2", "provider": "openai"},
-    {"model": "moonshotai/kimi-k2-instruct", "provider": "groq"},
-    {"model": "openai/gpt-oss-120b", "provider": "groq"},
+# The 'litellm_model' field is the model identifier used by litellm.
+# The 'temperature' field is the default sampling temperature for the model.
+AVAILABLE_MODELS: List[Dict] = [
+    {"model": "gpt-4.1", "provider": "openai", "litellm_model": "gpt-4.1", "temperature": 0.2},
+    {"model": "gpt-5.2", "provider": "openai", "litellm_model": "gpt-5.2", "temperature": 0.2},
+    {"model": "moonshotai/kimi-k2-instruct", "provider": "groq", "litellm_model": "groq/moonshotai/kimi-k2-instruct", "temperature": 0.3},
+    {"model": "openai/gpt-oss-120b", "provider": "groq", "litellm_model": "groq/openai/gpt-oss-120b", "temperature": 0.2},
+    {"model": "gemini-3-pro-preview", "provider": "gemini", "litellm_model": "gemini/gemini-3-pro-preview", "temperature": 0.5},
 ]
 
 
@@ -44,13 +48,9 @@ class LLMSettings:
 
     provider: str
     model: str
+    litellm_model: str
     api_key: str
-    base_url: str
-
-    def auth_header(self) -> Dict[str, str]:
-        """Return Authorization header dict for HTTP calls."""
-
-        return {"Authorization": f"Bearer {self.api_key}"}
+    temperature: float
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ class LLMSettings:
 # ---------------------------------------------------------------------------
 
 def get_llm_settings(model_name: str | None = None) -> LLMSettings:
-    """Resolve provider details, base URL and API key for a given model.
+    """Resolve provider details and API key for a given model.
 
     If *model_name* is ``None``, use the ``LLM_MODEL`` environment variable or
     fallback to the first entry in ``AVAILABLE_MODELS``.
@@ -85,8 +85,15 @@ def get_llm_settings(model_name: str | None = None) -> LLMSettings:
             f"Missing environment variable '{api_key_env}' required for provider '{provider_key}'."
         )
 
-    base_url = provider_cfg["base_url"]
-    return LLMSettings(provider=provider_key, model=model_name, api_key=api_key, base_url=base_url)
+    litellm_model = model_entry["litellm_model"]
+    temperature = model_entry.get("temperature", 0.2)
+    return LLMSettings(
+        provider=provider_key,
+        model=model_name,
+        litellm_model=litellm_model,
+        api_key=api_key,
+        temperature=temperature,
+    )
 
 
 # Freshdesk / other global settings could be added here later 
