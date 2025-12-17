@@ -32,6 +32,7 @@ LLM_PROVIDERS: Dict[str, Dict[str, str]] = {
 # List of supported models. Each entry maps a model name to its provider.
 AVAILABLE_MODELS: List[Dict[str, str]] = [
     {"model": "gpt-4.1", "provider": "openai"},
+    {"model": "gpt-5.2", "provider": "openai"},
     {"model": "moonshotai/kimi-k2-instruct", "provider": "groq"},
     {"model": "openai/gpt-oss-120b", "provider": "groq"},
 ]
