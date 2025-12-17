@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Dict, List, Any
 
 from llm_client import chat_completion
 from prompts_config import SYSTEM_PROMPT, USER_TEMPLATE
+
+logger = logging.getLogger(__name__)
 
 _OUTPUT_DIR = Path("output")
 _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -98,28 +101,113 @@ class IssueClusterer:
                     continue
             return f"ISSUE-{max_num + 1:04d}"
 
-        # If low confidence or missing id -> treat as new, *unless* this ticket already exists
-        if issue_data.get("confidence", 0) < 0.7 or not issue_data.get("issue_id"):
+        # -----------------------------------------------
+        # Helper: generate next branch id for a parent issue_id
+        # e.g., "ISSUE-0001" -> "ISSUE-0001-1", "ISSUE-0001-2", etc.
+        # Also supports branching from branches: "ISSUE-0001-1" -> "ISSUE-0001-1-1"
+        # -----------------------------------------------
+        def _next_branch_id(parent_id: str) -> str:
+            prefix = f"{parent_id}-"
+            max_branch = 0
+            for iss in self.issues:
+                iss_id = iss.get("issue_id", "")
+                if iss_id.startswith(prefix):
+                    # Extract the immediate branch number (first segment after parent)
+                    suffix = iss_id[len(prefix):]
+                    # Get only the first segment (in case of nested branches like "1-1")
+                    first_segment = suffix.split("-")[0]
+                    try:
+                        branch_num = int(first_segment)
+                        max_branch = max(max_branch, branch_num)
+                    except ValueError:
+                        continue
+            return f"{parent_id}-{max_branch + 1}"
+
+        # -----------------------------------------------
+        # Helper: find the insertion index for a branched issue
+        # Branches should be placed after their parent and any existing branches
+        # -----------------------------------------------
+        def _find_branch_insert_index(parent_id: str) -> int:
+            parent_idx = -1
+            last_related_idx = -1
+            prefix = f"{parent_id}-"
+            
+            for idx, iss in enumerate(self.issues):
+                iss_id = iss.get("issue_id", "")
+                if iss_id == parent_id:
+                    parent_idx = idx
+                    last_related_idx = idx
+                elif iss_id.startswith(prefix):
+                    last_related_idx = idx
+            
+            # Insert after the last related entry (parent or sibling branch)
+            if last_related_idx >= 0:
+                return last_related_idx + 1
+            # If parent not found, append at end
+            return len(self.issues)
+
+        # -----------------------------------------------
+        # Case 1: No issue_id returned -> treat as new issue
+        # -----------------------------------------------
+        if not issue_data.get("issue_id"):
+            # Check if this ticket already exists in the DB
             for iss in self.issues:
                 if ticket_id in iss.get("tickets", []):
                     # Update existing issue instead of creating duplicate
                     iss.setdefault("tickets", [])
-                    # Copy over any improved details from issue_data
                     for key, val in issue_data.items():
                         if key != "tickets" and val:
                             iss[key] = val
+                    logger.debug("Ticket %d already in DB, updated existing issue %s", ticket_id, iss["issue_id"])
                     return
 
-            # Otherwise invent new ID
+            # Create new issue with sequential ID
             new_id = _next_issue_id()
             issue_data["issue_id"] = new_id
             issue_data["tickets"] = [ticket_id]
             self.issues.append(issue_data)
+            logger.info("Created new issue %s for ticket %d (no issue_id from LLM)", new_id, ticket_id)
             return
 
-        # Find existing issue by id
+        # -----------------------------------------------
+        # Case 2: issue_id returned with LOW confidence (< 0.9)
+        # -> Create a branch entry instead of updating
+        # -----------------------------------------------
+        confidence = issue_data.get("confidence", 0)
+        returned_issue_id = issue_data.get("issue_id")
+        
+        if confidence < 0.9:
+            # Check if this ticket already exists in the DB
+            for iss in self.issues:
+                if ticket_id in iss.get("tickets", []):
+                    # Update existing issue instead of creating duplicate branch
+                    iss.setdefault("tickets", [])
+                    for key, val in issue_data.items():
+                        if key != "tickets" and val:
+                            iss[key] = val
+                    logger.debug("Ticket %d already in DB, updated existing issue %s", ticket_id, iss["issue_id"])
+                    return
+
+            # Create a new branch entry
+            branch_id = _next_branch_id(returned_issue_id)
+            issue_data["issue_id"] = branch_id
+            issue_data["tickets"] = [ticket_id]
+            
+            # Insert at the correct position (after parent and existing branches)
+            insert_idx = _find_branch_insert_index(returned_issue_id)
+            self.issues.insert(insert_idx, issue_data)
+            logger.info(
+                "Created branch issue %s from %s for ticket %d (confidence %.2f < 0.9)",
+                branch_id, returned_issue_id, ticket_id, confidence
+            )
+            return
+
+        # -----------------------------------------------
+        # Case 3: issue_id returned with HIGH confidence (>= 0.9)
+        # -> Update the existing entry
+        # -----------------------------------------------
         for issue in self.issues:
-            if issue["issue_id"] == issue_data["issue_id"]:
+            if issue["issue_id"] == returned_issue_id:
                 # Update existing issue with latest details (replace fields except "tickets")
                 for key, value in issue_data.items():
                     if key != "tickets":
@@ -127,8 +215,10 @@ class IssueClusterer:
                 issue.setdefault("tickets", [])
                 if ticket_id not in issue["tickets"]:
                     issue["tickets"].append(ticket_id)
+                logger.info("Updated existing issue %s with ticket %d (confidence %.2f)", returned_issue_id, ticket_id, confidence)
                 return
 
-        # If not found, treat as new
+        # If not found, treat as new (keep the LLM-assigned issue_id)
         issue_data["tickets"] = [ticket_id]
-        self.issues.append(issue_data) 
+        self.issues.append(issue_data)
+        logger.info("Created new issue %s for ticket %d (LLM-assigned ID not found in DB)", returned_issue_id, ticket_id) 

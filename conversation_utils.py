@@ -39,7 +39,7 @@ def build_conversation(ticket: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
 
-    return {"ticket_id": ticket_id, "conversation": messages}
+    return {"ticket_id": ticket_id, "conversation": messages, "ignore": False}
 
 
 def save_conversation(conv: Dict[str, Any]) -> Path:
@@ -55,4 +55,47 @@ def load_conversation(ticket_id: int) -> Dict[str, Any] | None:
     if path.exists():
         with path.open("r", encoding="utf-8") as fp:
             return json.load(fp)
-    return None 
+    return None
+
+
+def ensure_ignore_flag(conv: Dict[str, Any]) -> bool:
+    """Ensure the conversation has an 'ignore' flag, defaulting to False.
+    
+    Returns True if the flag was added (conversation was modified).
+    """
+    if "ignore" not in conv:
+        conv["ignore"] = False
+        return True
+    return False
+
+
+def backfill_ignore_flags() -> tuple[int, int]:
+    """Add 'ignore: false' to all conversations that don't have the flag.
+    
+    Returns (total_checked, total_updated) counts.
+    """
+    total_checked = 0
+    total_updated = 0
+    
+    for path in CONVERSATIONS_DIR.glob("*.json"):
+        try:
+            with path.open("r", encoding="utf-8") as fp:
+                conv = json.load(fp)
+            total_checked += 1
+            
+            if ensure_ignore_flag(conv):
+                with path.open("w", encoding="utf-8") as fp:
+                    json.dump(conv, fp, ensure_ascii=False, indent=2)
+                total_updated += 1
+        except (json.JSONDecodeError, IOError):
+            continue
+    
+    return total_checked, total_updated
+
+
+def is_ignored(ticket_id: int) -> bool:
+    """Check if a conversation is marked as ignored."""
+    conv = load_conversation(ticket_id)
+    if conv is None:
+        return False
+    return conv.get("ignore", False) 

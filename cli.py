@@ -25,6 +25,159 @@ app = typer.Typer(help="Silo Support Ticket Issue CLI")
 console = Console()
 
 
+def _fetch_and_analyze_conversations(db_path: Path):
+    """Fetch new conversations from Freshdesk and analyze unprocessed tickets.
+    
+    This function:
+    1. Fetches latest resolved ticket IDs from Freshdesk
+    2. Identifies which are NOT already cached in the conversations folder
+    3. Fetches and caches those new conversations
+    4. Compares ALL cached conversations with the issues DB to find unprocessed ones
+    """
+    import json
+    import questionary
+    from rich import box
+    from rich.panel import Panel
+    from tqdm import tqdm
+    
+    from data_fetcher import fetch_resolved_ticket_ids, fetch_ticket
+    from conversation_utils import (
+        CONVERSATIONS_DIR, build_conversation, save_conversation, 
+        load_conversation, backfill_ignore_flags, is_ignored
+    )
+    
+    console.print("\n[bold cyan]═══ Fetch & Analyze Conversations ═══[/bold cyan]\n")
+    
+    # Step 0: Ensure all existing conversations have the 'ignore' flag
+    console.print("[cyan]Step 0:[/cyan] Ensuring all conversations have 'ignore' flag...")
+    checked, updated = backfill_ignore_flags()
+    if updated > 0:
+        console.print(f"  Added 'ignore: false' to [yellow]{updated}[/yellow] conversations.\n")
+    else:
+        console.print(f"  All [green]{checked}[/green] conversations already have the flag.\n")
+    
+    # Ask how many pages to fetch
+    pages_str = questionary.text(
+        "Number of pages to fetch from Freshdesk?",
+        default="5"
+    ).ask()
+    if pages_str is None:
+        return
+    try:
+        max_pages = max(1, int(pages_str))
+    except ValueError:
+        console.print("[red]Invalid number, aborting.[/red]")
+        return
+    
+    # Step 1: Fetch ticket IDs from Freshdesk
+    console.print(f"\n[cyan]Step 1:[/cyan] Fetching ticket IDs from Freshdesk ({max_pages} pages)...")
+    ticket_ids = fetch_resolved_ticket_ids(max_pages)
+    console.print(f"  Found [green]{len(ticket_ids)}[/green] resolved tickets from Freshdesk.\n")
+    
+    # Step 2: Identify which are not cached (and track ignored ones)
+    cached_ids = set()
+    ignored_ids = set()
+    for f in CONVERSATIONS_DIR.glob("*.json"):
+        try:
+            tid = int(f.stem)
+            cached_ids.add(tid)
+            if is_ignored(tid):
+                ignored_ids.add(tid)
+        except ValueError:
+            continue
+    
+    new_ticket_ids = [tid for tid in ticket_ids if tid not in cached_ids]
+    console.print(f"[cyan]Step 2:[/cyan] Checking local cache...")
+    console.print(f"  Already cached: [yellow]{len(cached_ids)}[/yellow] conversations")
+    console.print(f"  Ignored (will be skipped): [dim]{len(ignored_ids)}[/dim] conversations")
+    console.print(f"  New (not cached): [green]{len(new_ticket_ids)}[/green] conversations\n")
+    
+    # Step 3: Fetch and cache new conversations
+    newly_fetched = []
+    if new_ticket_ids:
+        console.print(f"[cyan]Step 3:[/cyan] Fetching {len(new_ticket_ids)} new conversations from Freshdesk...")
+        for tid in tqdm(new_ticket_ids, desc="Fetching"):
+            try:
+                ticket_json = fetch_ticket(tid)
+                conv = build_conversation(ticket_json)
+                save_conversation(conv)
+                newly_fetched.append(tid)
+            except Exception as e:
+                console.print(f"  [red]Error fetching ticket {tid}: {e}[/red]")
+        
+        console.print(f"\n  [green]✓[/green] Fetched and cached [green]{len(newly_fetched)}[/green] new conversations:")
+        
+        # Display newly fetched in a table (full list)
+        if newly_fetched:
+            table = Table(title="Newly Fetched Conversations", box=box.SIMPLE)
+            table.add_column("Ticket ID", style="cyan")
+            table.add_column("Status", style="green")
+            for tid in newly_fetched:
+                table.add_row(str(tid), "✓ cached")
+            console.print(table)
+    else:
+        console.print("[cyan]Step 3:[/cyan] No new conversations to fetch.\n")
+    
+    # Step 4: Compare with issues DB to find unprocessed (excluding ignored)
+    console.print(f"\n[cyan]Step 4:[/cyan] Analyzing unprocessed conversations...")
+    
+    # Load issues DB
+    processed_ticket_ids = set()
+    if db_path.exists():
+        try:
+            issues = json.loads(db_path.read_text())
+            for issue in issues:
+                processed_ticket_ids.update(issue.get("tickets", []))
+        except (json.JSONDecodeError, KeyError):
+            console.print(f"  [yellow]Warning: Could not parse issues DB at {db_path}[/yellow]")
+    
+    # Get all cached conversation IDs (refresh to include newly fetched)
+    all_cached_ids = set()
+    ignored_ids = set()  # Re-scan for ignored
+    for f in CONVERSATIONS_DIR.glob("*.json"):
+        try:
+            tid = int(f.stem)
+            all_cached_ids.add(tid)
+            if is_ignored(tid):
+                ignored_ids.add(tid)
+        except ValueError:
+            continue
+    
+    # Find unprocessed (cached but not linked to any issue, excluding ignored)
+    unprocessed_ids = sorted(all_cached_ids - processed_ticket_ids - ignored_ids)
+    
+    console.print(f"  Total cached conversations: [yellow]{len(all_cached_ids)}[/yellow]")
+    console.print(f"  Linked to issues in DB: [green]{len(processed_ticket_ids)}[/green]")
+    console.print(f"  Ignored: [dim]{len(ignored_ids)}[/dim]")
+    console.print(f"  [bold]Unprocessed (not linked, not ignored): [red]{len(unprocessed_ids)}[/red][/bold]\n")
+    
+    # Display unprocessed tickets (full list)
+    if unprocessed_ids:
+        table = Table(title="Unprocessed Conversations", box=box.SIMPLE)
+        table.add_column("Ticket ID", style="cyan")
+        table.add_column("Cache File", style="dim")
+        for tid in unprocessed_ids:
+            table.add_row(str(tid), f"conversations/{tid}.json")
+        console.print(table)
+        
+        # Offer to process them
+        if questionary.confirm(
+            f"\nWould you like to process these {len(unprocessed_ids)} unprocessed tickets now?",
+            default=False
+        ).ask():
+            # Return the unprocessed IDs for processing
+            console.print(f"\n[green]Returning to main flow with {len(unprocessed_ids)} tickets to process...[/green]")
+            return unprocessed_ids
+    else:
+        console.print(Panel(
+            "[green]✓ All cached conversations are linked to issues in the DB![/green]",
+            title="Analysis Complete",
+            border_style="green"
+        ))
+    
+    return None
+
+
 @app.command("process")
 def process_command(
     # Ticket selection (mutually exclusive)
@@ -107,6 +260,7 @@ def process_command(
         source = questionary.select(
             "How would you like to select tickets?",
             choices=[
+                "Fetch & analyze conversations (no processing)",
                 "Latest resolved tickets (by pages)",
                 "Enter ticket IDs manually",
             ],
@@ -114,6 +268,19 @@ def process_command(
 
         if source is None:
             raise typer.Exit(code=1)
+
+        # ------------------------------------------------------------------
+        # Option: Fetch & analyze conversations only (no LLM processing)
+        # ------------------------------------------------------------------
+        if source.startswith("Fetch & analyze"):
+            result = _fetch_and_analyze_conversations(output)
+            if result is None:
+                # User didn't choose to process, just exit
+                raise typer.Exit(code=0)
+            # User chose to process unprocessed tickets
+            ids_list = result
+            source = "Unprocessed tickets from analysis"
+            # Continue to processing options below
 
         if source.startswith("Latest"):
             pages_str = questionary.text("Number of pages to fetch?", default="5").ask()
@@ -125,7 +292,7 @@ def process_command(
                 typer.echo("Invalid number, aborting.")
                 raise typer.Exit(code=1)
             ids_list = None
-        else:
+        elif source.startswith("Enter"):
             ids_raw = questionary.text("Enter comma-separated ticket IDs:").ask()
             if ids_raw is None:
                 raise typer.Exit(code=1)
@@ -347,6 +514,144 @@ def config_set(
 
     _update_env_file(**updates)
     typer.echo(".env updated successfully. Run 'config show' to verify.")
+
+
+@app.command("fetch")
+def fetch_command(
+    pages: int = typer.Option(
+        5,
+        "--pages",
+        min=1,
+        help="Number of pages to fetch from Freshdesk (30 tickets each).",
+    ),
+    output: Path = typer.Option(
+        Path("output/silo_issues_db.json"),
+        "--output",
+        help="Path to the issues DB for comparison.",
+    ),
+):
+    """Fetch new conversations and show unprocessed tickets.
+    
+    This command fetches the latest resolved tickets from Freshdesk,
+    caches new conversations locally, and reports which tickets have
+    not yet been linked to any issue in the database.
+    """
+    import json
+    from rich import box
+    from rich.panel import Panel
+    from tqdm import tqdm
+    
+    from data_fetcher import fetch_resolved_ticket_ids, fetch_ticket
+    from conversation_utils import (
+        CONVERSATIONS_DIR, build_conversation, save_conversation,
+        backfill_ignore_flags, is_ignored
+    )
+    
+    console.print("\n[bold cyan]═══ Fetch & Analyze Conversations ═══[/bold cyan]\n")
+    
+    # Step 0: Ensure all existing conversations have the 'ignore' flag
+    console.print("[cyan]Step 0:[/cyan] Ensuring all conversations have 'ignore' flag...")
+    checked, updated = backfill_ignore_flags()
+    if updated > 0:
+        console.print(f"  Added 'ignore: false' to [yellow]{updated}[/yellow] conversations.\n")
+    else:
+        console.print(f"  All [green]{checked}[/green] conversations already have the flag.\n")
+    
+    # Step 1: Fetch ticket IDs from Freshdesk
+    console.print(f"[cyan]Step 1:[/cyan] Fetching ticket IDs from Freshdesk ({pages} pages)...")
+    ticket_ids = fetch_resolved_ticket_ids(pages)
+    console.print(f"  Found [green]{len(ticket_ids)}[/green] resolved tickets from Freshdesk.\n")
+    
+    # Step 2: Identify which are not cached (and track ignored ones)
+    cached_ids = set()
+    ignored_ids = set()
+    for f in CONVERSATIONS_DIR.glob("*.json"):
+        try:
+            tid = int(f.stem)
+            cached_ids.add(tid)
+            if is_ignored(tid):
+                ignored_ids.add(tid)
+        except ValueError:
+            continue
+    
+    new_ticket_ids = [tid for tid in ticket_ids if tid not in cached_ids]
+    console.print(f"[cyan]Step 2:[/cyan] Checking local cache...")
+    console.print(f"  Already cached: [yellow]{len(cached_ids)}[/yellow] conversations")
+    console.print(f"  Ignored (will be skipped): [dim]{len(ignored_ids)}[/dim] conversations")
+    console.print(f"  New (not cached): [green]{len(new_ticket_ids)}[/green] conversations\n")
+    
+    # Step 3: Fetch and cache new conversations
+    newly_fetched = []
+    if new_ticket_ids:
+        console.print(f"[cyan]Step 3:[/cyan] Fetching {len(new_ticket_ids)} new conversations from Freshdesk...")
+        for tid in tqdm(new_ticket_ids, desc="Fetching"):
+            try:
+                ticket_json = fetch_ticket(tid)
+                conv = build_conversation(ticket_json)
+                save_conversation(conv)
+                newly_fetched.append(tid)
+            except Exception as e:
+                console.print(f"  [red]Error fetching ticket {tid}: {e}[/red]")
+        
+        console.print(f"\n  [green]✓[/green] Fetched and cached [green]{len(newly_fetched)}[/green] new conversations")
+        
+        # Display newly fetched (full list)
+        if newly_fetched:
+            table = Table(title="Newly Fetched Conversations", box=box.SIMPLE)
+            table.add_column("Ticket ID", style="cyan")
+            for tid in newly_fetched:
+                table.add_row(str(tid))
+            console.print(table)
+    else:
+        console.print("[cyan]Step 3:[/cyan] No new conversations to fetch.\n")
+    
+    # Step 4: Compare with issues DB (excluding ignored)
+    console.print(f"\n[cyan]Step 4:[/cyan] Analyzing unprocessed conversations...")
+    
+    processed_ticket_ids = set()
+    if output.exists():
+        try:
+            issues = json.loads(output.read_text())
+            for issue in issues:
+                processed_ticket_ids.update(issue.get("tickets", []))
+        except (json.JSONDecodeError, KeyError):
+            console.print(f"  [yellow]Warning: Could not parse issues DB at {output}[/yellow]")
+    
+    # Get all cached conversation IDs (refresh to include newly fetched)
+    all_cached_ids = set()
+    ignored_ids = set()  # Re-scan for ignored
+    for f in CONVERSATIONS_DIR.glob("*.json"):
+        try:
+            tid = int(f.stem)
+            all_cached_ids.add(tid)
+            if is_ignored(tid):
+                ignored_ids.add(tid)
+        except ValueError:
+            continue
+    
+    # Find unprocessed (excluding ignored)
+    unprocessed_ids = sorted(all_cached_ids - processed_ticket_ids - ignored_ids)
+    
+    console.print(f"  Total cached conversations: [yellow]{len(all_cached_ids)}[/yellow]")
+    console.print(f"  Linked to issues in DB: [green]{len(processed_ticket_ids)}[/green]")
+    console.print(f"  Ignored: [dim]{len(ignored_ids)}[/dim]")
+    console.print(f"  [bold]Unprocessed (not linked, not ignored): [red]{len(unprocessed_ids)}[/red][/bold]\n")
+    
+    if unprocessed_ids:
+        table = Table(title="Unprocessed Conversations", box=box.SIMPLE)
+        table.add_column("Ticket ID", style="cyan")
+        for tid in unprocessed_ids:
+            table.add_row(str(tid))
+        console.print(table)
+        
+        console.print(f"\n[dim]To process these tickets, run:[/dim]")
+        console.print(f"  [cyan]python -m cli process --ticket-ids {','.join(str(t) for t in unprocessed_ids)}[/cyan]")
+    else:
+        console.print(Panel(
+            "[green]✓ All cached conversations are linked to issues (or ignored)![/green]",
+            title="Analysis Complete",
+            border_style="green"
+        ))
 
 
 @app.command("ui")
