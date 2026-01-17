@@ -1,4 +1,15 @@
 """Centralised prompt templates for the LLM calls."""
+from pathlib import Path
+
+# Load support agent notes from external file (if exists)
+_SUPPORT_NOTES_PATH = Path(__file__).parent / "Support-agent-notes.txt"
+
+def _load_support_agent_notes() -> str:
+    """Load support agent notes from external file."""
+    if _SUPPORT_NOTES_PATH.exists():
+        return _SUPPORT_NOTES_PATH.read_text(encoding="utf-8").strip()
+    return ""
+
 SYSTEM_PROMPT = """
 Developer: You are a customer support issue classifier for Silo, a smart vacuum-sealing food storage system.
 
@@ -62,6 +73,13 @@ All output must be a single JSON object only—no code blocks, extra text, or om
 ## Output Format
 Respond with a JSON object matching the schema above, ensuring all fields are present and types correct. Never wrap the output in code blocks or add extra text.
 """
+
+def get_system_prompt() -> str:
+    """Return the full system prompt with support agent notes appended."""
+    notes = _load_support_agent_notes()
+    if notes:
+        return SYSTEM_PROMPT + "\n\n## Support Agent Context Notes\n" + notes
+    return SYSTEM_PROMPT
 
 USER_TEMPLATE = """
 Current issues database summary (ID | Categorie | Short description | Keywords):

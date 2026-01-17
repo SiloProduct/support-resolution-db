@@ -79,8 +79,20 @@ def build_conversation(ticket: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
 
-    # Auto-ignore tickets with automated system messages as last message
-    ignore = should_auto_ignore(messages)
+    # Check multiple ignore conditions:
+    # 1. Agent manually flagged via custom field
+    # 2. Auto-ignore based on automated system messages
+    ignore = False
+    
+    # Check if agent manually flagged this ticket to be ignored
+    custom_fields = ticket.get("custom_fields", {})
+    if custom_fields.get("cf_ignore_from_analysis") is True:
+        ignore = True
+    
+    # Also check for automated system messages (if not already ignored)
+    if not ignore:
+        ignore = should_auto_ignore(messages)
+    
     return {"ticket_id": ticket_id, "conversation": messages, "ignore": ignore}
 
 

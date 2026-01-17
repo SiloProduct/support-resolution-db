@@ -9,7 +9,7 @@ from typing import List, Optional
 from tqdm import tqdm
 
 from data_fetcher import fetch_resolved_ticket_ids
-from conversation_utils import build_conversation, save_conversation, is_ignored
+from conversation_utils import build_conversation, save_conversation
 from issue_clusterer import IssueClusterer
 
 
@@ -27,6 +27,10 @@ def run(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s | %(message)s",
     )
+    
+    # Set LiteLLM logger level based on verbose flag
+    litellm_logger = logging.getLogger("LiteLLM")
+    litellm_logger.setLevel(logging.DEBUG if verbose else logging.WARNING)
 
     if ticket_ids is None:
         logging.info("Fetching ticket IDs…")
@@ -39,16 +43,12 @@ def run(
     from conversation_utils import load_conversation
 
     for tid in tqdm(ticket_ids, desc="Processing tickets"):
-        # Skip if conversation is marked as ignored
-        if is_ignored(tid):
-            logging.debug("Ticket %d is marked as ignored, skipping", tid)
-            continue
-
         # Skip if ticket already processed and not reprocessing
         if clusterer.has_ticket(tid) and not reprocess:
             logging.debug("Ticket %d already in DB, skipping", tid)
             continue
 
+        # Load or fetch conversation
         conv = None
         if not refresh:
             conv = load_conversation(tid)
@@ -56,6 +56,12 @@ def run(
             ticket_json = fetch_ticket(tid)
             conv = build_conversation(ticket_json)
             save_conversation(conv)
+
+        # Skip if conversation is marked as ignored (check AFTER loading/fetching
+        # so that newly flagged tickets via cf_ignore_from_analysis are respected)
+        if conv.get("ignore", False):
+            logging.debug("Ticket %d is marked as ignored, skipping", tid)
+            continue
 
         clusterer.process_conversation(conv, debug=prompt_debug)
 

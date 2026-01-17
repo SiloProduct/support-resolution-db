@@ -1,0 +1,14 @@
+<updated-support-agent-notes>
+### Software Notes
+- Current production device version: 9.01.26
+- Latest stable beta device version: 9.01.39
+- Current production Silo app version: 2.0.1
+
+Device version 9.01.26 and above supports Bluetooth-based device setup, with direct Wi-Fi as an alternative.
+Some users may have version 8.01.X with direct Wi-Fi setup only (not shipped anymore)
+
+### Hardware Notes
+Common container issues:
+- Slow vacuum leak (hours to couple of days), usually due to a faulty top seal.
+- Rapid vacuum leak (fails to seal), usually due to a faulty bottom seal or lid rocker.
+</updated-support-agent-notes>

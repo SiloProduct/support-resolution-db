@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Any
 
 from llm_client import chat_completion
-from prompts_config import SYSTEM_PROMPT, USER_TEMPLATE
+from prompts_config import get_system_prompt, USER_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class IssueClusterer:
             conversation=json.dumps(conv, ensure_ascii=False, indent=2),
         )
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT.strip()},
+            {"role": "system", "content": get_system_prompt().strip()},
             {"role": "user", "content": user_prompt.strip()},
         ]
         if debug:

@@ -263,6 +263,16 @@ def process_command(
     if not non_interactive and not pages and not ticket_ids:
         import questionary
         from rich import box
+        from rich.panel import Panel
+
+        # Reminder about support agent notes
+        console.print(Panel(
+            "[yellow]📝 Reminder:[/yellow] Before running analysis, ensure "
+            "[cyan]Support-agent-notes.txt[/cyan] is up to date with the latest "
+            "software versions and known issues.",
+            border_style="dim",
+        ))
+        console.print()
 
         # 1) Ticket source selection
         source = questionary.select(

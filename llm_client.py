@@ -13,8 +13,13 @@ from config import get_llm_settings
 
 logger = logging.getLogger(__name__)
 
-# Suppress litellm's verbose default logging (set to WARNING or ERROR if needed)
+# Suppress litellm's verbose default logging
 litellm.suppress_debug_info = True
+
+# Set LiteLLM's logger to WARNING level by default to avoid breaking progress bars
+# (can be overridden with --verbose flag)
+litellm_logger = logging.getLogger("LiteLLM")
+litellm_logger.setLevel(logging.WARNING)
 
 
 @backoff.on_exception(

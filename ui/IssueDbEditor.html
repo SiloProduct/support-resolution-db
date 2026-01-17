@@ -129,7 +129,6 @@
         color: var(--text);
         border: 1px solid var(--border);
         border-radius: 10px;
-        box-shadow: var(--shadow);
         cursor: pointer;
         transition: transform 0.04s ease, border-color 0.2s ease, background 0.2s ease;
         user-select: none;
@@ -365,7 +364,7 @@
         <div class="header">
           <div class="row">
             <button class="btn" id="btnAdd">Add</button>
-            <button class="btn" id="btnDuplicate" disabled>Duplicate</button>
+            <button class="btn" id="btnDuplicate" disabled title="Create a branched variant of this issue">Branch</button>
             <button class="btn destructive" id="btnDelete" disabled>Delete</button>
             <button class="btn" id="btnEditJson" title="Edit issue as JSON">Edit JSON</button>
           </div>
@@ -612,7 +611,7 @@
             const t = [x.issue_id, x.category, x.short_description, x.notes, ...(x.keywords||[]), ...(x.resolution_steps||[])].join(' ').toLowerCase();
             return t.includes(q);
           })
-          .sort((a, b) => a.x.issue_id.localeCompare(b.x.issue_id));
+          .sort((a, b) => compareIssueIds(a.x.issue_id, b.x.issue_id));
 
         issuesList.innerHTML = items.map(({ x, i }) => `
           <div class="card ${i === selectedIndex ? 'active' : ''}" data-index="${i}">
@@ -780,6 +779,61 @@
 
       function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
 
+      // Parse issue ID into components for sorting/comparison
+      // Supports: ISSUE-0031, ISSUE-0031-1, ISSUE-0031-1-2, etc.
+      function parseIssueId(id) {
+        const match = String(id || '').match(/^ISSUE-(\d+)((?:-\d+)*)$/);
+        if (!match) return { base: 0, branches: [], valid: false };
+        const base = parseInt(match[1], 10);
+        const branchStr = match[2] || '';
+        const branches = branchStr ? branchStr.split('-').filter(Boolean).map(Number) : [];
+        return { base, branches, valid: true };
+      }
+
+      // Compare two issue IDs for sorting (supports branched IDs)
+      function compareIssueIds(a, b) {
+        const pa = parseIssueId(a);
+        const pb = parseIssueId(b);
+
+        // Invalid IDs sort to the end
+        if (!pa.valid && !pb.valid) return String(a).localeCompare(String(b));
+        if (!pa.valid) return 1;
+        if (!pb.valid) return -1;
+
+        // First compare base numbers
+        if (pa.base !== pb.base) return pa.base - pb.base;
+
+        // Parent issues (no branches) come before their branches
+        if (pa.branches.length === 0 && pb.branches.length > 0) return -1;
+        if (pb.branches.length === 0 && pa.branches.length > 0) return 1;
+
+        // Compare branches level by level
+        const maxLen = Math.max(pa.branches.length, pb.branches.length);
+        for (let i = 0; i < maxLen; i++) {
+          const ba = pa.branches[i] ?? -1;
+          const bb = pb.branches[i] ?? -1;
+          if (ba !== bb) return ba - bb;
+        }
+
+        return 0;
+      }
+
+      // Get next available branch ID for a given parent issue
+      function nextBranchId(parentId) {
+        const parentStr = String(parentId || '');
+        // Find all direct children of this parent (parent-N, not parent-N-M)
+        const escapedParent = parentStr.replace(/[-]/g, '\\-');
+        const regex = new RegExp(`^${escapedParent}-(\\d+)$`);
+        const childNums = db.map(x => {
+          const id = String(x.issue_id || '');
+          const match = id.match(regex);
+          return match ? parseInt(match[1], 10) : 0;
+        }).filter(n => n > 0);
+
+        const max = childNums.length ? Math.max(...childNums) : 0;
+        return `${parentStr}-${max + 1}`;
+      }
+
       function validateIssue(issue) {
         const errs = {};
         if (!issue.category) errs.category = 'Category is required';
@@ -829,8 +883,12 @@
       }
 
       function nextIssueId() {
-        const nums = db.map(x => String(x.issue_id || '').match(/^ISSUE-(\d{4})$/)?.[1]).filter(Boolean).map(s => parseInt(s, 10));
-        const max = nums.length ? Math.max(...nums) : 0;
+        // Find the max base ID across all issues (including branched ones)
+        const baseNums = db.map(x => {
+          const parsed = parseIssueId(x.issue_id);
+          return parsed.valid ? parsed.base : 0;
+        }).filter(n => n > 0);
+        const max = baseNums.length ? Math.max(...baseNums) : 0;
         const n = max + 1;
         return `ISSUE-${String(n).padStart(4, '0')}`;
       }
@@ -859,7 +917,8 @@
         if (selectedIndex < 0) return;
         const src = db[selectedIndex];
         const copy = JSON.parse(JSON.stringify(src));
-        copy.issue_id = nextIssueId();
+        // Create a branch of the original issue (e.g., ISSUE-0031 -> ISSUE-0031-1)
+        copy.issue_id = nextBranchId(src.issue_id);
         db.push(copy);
         setDirty(true);
         renderList();
@@ -1335,12 +1394,31 @@
 
       function reassignIssueIdsSequentially() {
         if (!Array.isArray(db) || db.length === 0) return;
-        // Sort by current numeric order if possible
-        const items = [...db].map((item, idx) => ({ item, idx, num: parseInt(String(item.issue_id||'').match(/\d+/)?.[0] || idx+1, 10) }));
-        items.sort((a,b) => a.num - b.num || a.idx - b.idx);
-        items.forEach((entry, i) => {
-          entry.item.issue_id = `ISSUE-${String(i + 1).padStart(4, '0')}`;
+
+        // Group items by their base ID, preserving branch structure
+        const groups = new Map();
+        db.forEach((item) => {
+          const parsed = parseIssueId(item.issue_id);
+          const baseKey = parsed.valid ? parsed.base : 0;
+          if (!groups.has(baseKey)) {
+            groups.set(baseKey, []);
+          }
+          groups.get(baseKey).push({ item, branches: parsed.branches });
         });
+
+        // Sort groups by their original base ID
+        const sortedGroupKeys = Array.from(groups.keys()).sort((a, b) => a - b);
+
+        // Reassign base IDs while preserving branch structure
+        sortedGroupKeys.forEach((oldBase, newIndex) => {
+          const newBase = newIndex + 1;
+          const group = groups.get(oldBase);
+          group.forEach(({ item, branches }) => {
+            const branchSuffix = branches.length ? '-' + branches.join('-') : '';
+            item.issue_id = `ISSUE-${String(newBase).padStart(4, '0')}${branchSuffix}`;
+          });
+        });
+
         setDirty(true);
         renderList();
         // Keep current selection by index if still valid
